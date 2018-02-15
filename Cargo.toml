@@ -9,7 +9,7 @@ keywords = ["wasm", "webassembly", "bytecode", "interpreter"]
 exclude = [ "res/*", "spec/*" ]
 
 [dependencies]
-parity-wasm = { git = "https://github.com/paritytech/parity-wasm.git", rev = "55e0fb852a182bdb2cde89c50794387ca5753e6a" }
+parity-wasm = { git = "https://github.com/paritytech/parity-wasm.git", rev = "a178efea7e6299be903f8bbba9e3bd800820960f" }
 byteorder = "1.0"
 memory_units = "0.3.0"
 
