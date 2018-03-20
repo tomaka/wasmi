@@ -1,14 +1,10 @@
 use std::{i32, i64, u32, u64, f32};
 use std::io;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use parity_wasm::elements::ValueType;
 use TrapKind;
 
 #[derive(Debug)]
 pub enum Error {
-	UnexpectedType {
-		expected: ValueType,
-	},
 	InvalidLittleEndianBuffer,
 }
 
@@ -31,10 +27,23 @@ pub enum RuntimeValue {
 	F64(f64),
 }
 
-/// Try to convert into trait.
-pub trait TryInto<T, E> {
-	/// Try to convert self into other value.
-	fn try_into(self) -> Result<T, E>;
+/// Trait for creating value from a [`RuntimeValue`].
+///
+/// Typically each implementation can create a value from the specific type.
+/// For example, values of type `bool` or `u32` are both represented by [`I32`] and `f64` values are represented by
+/// [`F64`].
+///
+/// [`I32`]: enum.RuntimeValue.html#variant.I32
+/// [`F64`]: enum.RuntimeValue.html#variant.F64
+/// [`RuntimeValue`]: enum.RuntimeValue.html
+pub trait FromRuntimeValue where Self: Sized {
+	/// Create a value of type `Self` from a given [`RuntimeValue`].
+	///
+	/// Returns `None` if the [`RuntimeValue`] is of type different than
+	/// expected by the conversion in question.
+	///
+	/// [`RuntimeValue`]: enum.RuntimeValue.html
+	fn from_runtime_value(val: RuntimeValue) -> Option<Self>;
 }
 
 /// Convert one type to another by wrapping.
@@ -134,12 +143,12 @@ impl RuntimeValue {
 
 	/// Creates new value by interpreting passed u32 as f32.
 	pub fn decode_f32(val: u32) -> Self {
-		RuntimeValue::F32(f32_from_bits(val))
+		RuntimeValue::F32(f32::from_bits(val))
 	}
 
 	/// Creates new value by interpreting passed u64 as f64.
 	pub fn decode_f64(val: u64) -> Self {
-		RuntimeValue::F64(f64_from_bits(val))
+		RuntimeValue::F64(f64::from_bits(val))
 	}
 
 	/// Get variable type for this value.
@@ -150,6 +159,17 @@ impl RuntimeValue {
 			RuntimeValue::F32(_) => ::types::ValueType::F32,
 			RuntimeValue::F64(_) => ::types::ValueType::F64,
 		}
+	}
+
+	/// Returns `T` if this particular [`RuntimeValue`] contains
+	/// appropriate type.
+	///
+	/// See [`FromRuntimeValue`] for details.
+	///
+	/// [`FromRuntimeValue`]: trait.FromRuntimeValue.html
+	/// [`RuntimeValue`]: enum.RuntimeValue.html
+	pub fn try_into<T: FromRuntimeValue>(self) -> Option<T> {
+		FromRuntimeValue::from_runtime_value(self)
 	}
 }
 
@@ -189,68 +209,38 @@ impl From<f64> for RuntimeValue {
 	}
 }
 
-impl TryInto<bool, Error> for RuntimeValue {
-	fn try_into(self) -> Result<bool, Error> {
-		match self {
-			RuntimeValue::I32(val) => Ok(val != 0),
-			_ => Err(Error::UnexpectedType { expected: ValueType::I32 }),
+macro_rules! impl_from_runtime_value {
+	($expected_rt_ty: ident, $into: ty) => {
+		impl FromRuntimeValue for $into {
+			fn from_runtime_value(val: RuntimeValue) -> Option<Self> {
+				match val {
+					RuntimeValue::$expected_rt_ty(val) => Some(val as $into),
+					_ => None,
+				}
+			}
+		}
+	};
+}
+
+/// This conversion assumes that boolean values are represented by
+/// [`I32`] type.
+///
+/// [`I32`]: enum.RuntimeValue.html#variant.I32
+impl FromRuntimeValue for bool {
+	fn from_runtime_value(val: RuntimeValue) -> Option<Self> {
+		match val {
+			RuntimeValue::I32(val) => Some(val != 0),
+			_ => None,
 		}
 	}
 }
 
-impl TryInto<i32, Error> for RuntimeValue {
-	fn try_into(self) -> Result<i32, Error> {
-		match self {
-			RuntimeValue::I32(val) => Ok(val),
-			_ => Err(Error::UnexpectedType { expected: ValueType::I32 }),
-		}
-	}
-}
-
-impl TryInto<i64, Error> for RuntimeValue {
-	fn try_into(self) -> Result<i64, Error> {
-		match self {
-			RuntimeValue::I64(val) => Ok(val),
-			_ => Err(Error::UnexpectedType { expected: ValueType::I64 }),
-		}
-	}
-}
-
-impl TryInto<f32, Error> for RuntimeValue {
-	fn try_into(self) -> Result<f32, Error> {
-		match self {
-			RuntimeValue::F32(val) => Ok(val),
-			_ => Err(Error::UnexpectedType { expected: ValueType::F32 }),
-		}
-	}
-}
-
-impl TryInto<f64, Error> for RuntimeValue {
-	fn try_into(self) -> Result<f64, Error> {
-		match self {
-			RuntimeValue::F64(val) => Ok(val),
-			_ => Err(Error::UnexpectedType { expected: ValueType::F64 }),
-		}
-	}
-}
-
-impl TryInto<u32, Error> for RuntimeValue {
-	fn try_into(self) -> Result<u32, Error> {
-		match self {
-			RuntimeValue::I32(val) => Ok(val as u32),
-			_ => Err(Error::UnexpectedType { expected: ValueType::I32 }),
-		}
-	}
-}
-
-impl TryInto<u64, Error> for RuntimeValue {
-	fn try_into(self) -> Result<u64, Error> {
-		match self {
-			RuntimeValue::I64(val) => Ok(val as u64),
-			_ => Err(Error::UnexpectedType { expected: ValueType::I64 }),
-		}
-	}
-}
+impl_from_runtime_value!(I32, i32);
+impl_from_runtime_value!(I64, i64);
+impl_from_runtime_value!(F32, f32);
+impl_from_runtime_value!(F64, f64);
+impl_from_runtime_value!(I32, u32);
+impl_from_runtime_value!(I64, u64);
 
 macro_rules! impl_wrap_into {
 	($from: ident, $into: ident) => {
@@ -367,21 +357,20 @@ impl_transmute_into_as!(u32, i32);
 impl_transmute_into_as!(i64, u64);
 impl_transmute_into_as!(u64, i64);
 
-// TODO: rewrite these safely when `f32/f32::to_bits/from_bits` stabilized.
 impl TransmuteInto<i32> for f32 {
-	fn transmute_into(self) -> i32 { unsafe { ::std::mem::transmute(self) } }
+	fn transmute_into(self) -> i32 { self.to_bits() as i32 }
 }
 
 impl TransmuteInto<i64> for f64 {
-	fn transmute_into(self) -> i64 { unsafe { ::std::mem::transmute(self) } }
+	fn transmute_into(self) -> i64 { self.to_bits() as i64 }
 }
 
 impl TransmuteInto<f32> for i32 {
-	fn transmute_into(self) -> f32 { f32_from_bits(self as _) }
+	fn transmute_into(self) -> f32 { f32::from_bits(self as u32) }
 }
 
 impl TransmuteInto<f64> for i64 {
-	fn transmute_into(self) -> f64 { f64_from_bits(self as _) }
+	fn transmute_into(self) -> f64 { f64::from_bits(self as u64) }
 }
 
 impl LittleEndianConvert for i8 {
@@ -488,7 +477,7 @@ impl LittleEndianConvert for f32 {
 
 	fn from_little_endian(buffer: &[u8]) -> Result<Self, Error> {
 		io::Cursor::new(buffer).read_u32::<LittleEndian>()
-			.map(f32_from_bits)
+			.map(f32::from_bits)
 			.map_err(|_| Error::InvalidLittleEndianBuffer)
 	}
 }
@@ -503,45 +492,9 @@ impl LittleEndianConvert for f64 {
 
 	fn from_little_endian(buffer: &[u8]) -> Result<Self, Error> {
 		io::Cursor::new(buffer).read_u64::<LittleEndian>()
-			.map(f64_from_bits)
+			.map(f64::from_bits)
 			.map_err(|_| Error::InvalidLittleEndianBuffer)
 	}
-}
-
-// Convert u32 to f32 safely, masking out sNAN
-fn f32_from_bits(mut v: u32) -> f32 {
-	const EXP_MASK: u32   = 0x7F800000;
-	const QNAN_MASK: u32  = 0x00400000;
-	const FRACT_MASK: u32 = 0x007FFFFF;
-
-	if v & EXP_MASK == EXP_MASK && v & FRACT_MASK != 0 {
-		// If we have a NaN value, we
-		// convert signaling NaN values to quiet NaN
-		// by setting the the highest bit of the fraction
-		// TODO: remove when https://github.com/BurntSushi/byteorder/issues/71 closed.
-		// or `f32::from_bits` stabilized.
-		v |= QNAN_MASK;
-	}
-
-	unsafe { ::std::mem::transmute(v) }
-}
-
-// Convert u64 to f64 safely, masking out sNAN
-fn f64_from_bits(mut v: u64) -> f64 {
-	const EXP_MASK: u64   = 0x7FF0000000000000;
-	const QNAN_MASK: u64  = 0x0001000000000000;
-	const FRACT_MASK: u64 = 0x000FFFFFFFFFFFFF;
-
-	if v & EXP_MASK == EXP_MASK && v & FRACT_MASK != 0 {
-		// If we have a NaN value, we
-		// convert signaling NaN values to quiet NaN
-		// by setting the the highest bit of the fraction
-		// TODO: remove when https://github.com/BurntSushi/byteorder/issues/71 closed.
-		// or `f64::from_bits` stabilized.
-		v |= QNAN_MASK;
-	}
-
-	unsafe { ::std::mem::transmute(v) }
 }
 
 macro_rules! impl_integer_arithmetic_ops {

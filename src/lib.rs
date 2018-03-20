@@ -134,6 +134,18 @@ impl Trap {
 	}
 }
 
+impl fmt::Display for Trap {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Trap: {:?}", self.kind)
+	}
+}
+
+impl error::Error for Trap {
+	fn description(&self) -> &str {
+		"runtime trap"
+	}
+}
+
 /// Error type which can thrown by wasm code or by host environment.
 ///
 /// See [`Trap`] for details.
@@ -352,7 +364,7 @@ mod tests;
 
 pub use self::memory::{MemoryInstance, MemoryRef, LINEAR_MEMORY_PAGE_SIZE};
 pub use self::table::{TableInstance, TableRef};
-pub use self::value::RuntimeValue;
+pub use self::value::{RuntimeValue, FromRuntimeValue};
 pub use self::host::{Externals, NopExternals, HostError, RuntimeArgs};
 pub use self::imports::{ModuleImportResolver, ImportResolver, ImportsBuilder};
 pub use self::module::{ModuleInstance, ModuleRef, ExternVal, NotStartedModuleRef};
