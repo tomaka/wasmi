@@ -368,12 +368,30 @@ impl WrapInto<F32> for F64 {
 macro_rules! impl_try_truncate_into {
     (@primitive $from: ident, $into: ident, $to_primitive:path) => {
         impl TryTruncateInto<$into, TrapKind> for $from {
+            #[cfg(feature = "std")]
             fn try_truncate_into(self) -> Result<$into, TrapKind> {
                 // Casting from a float to an integer will round the float towards zero
                 num_rational::BigRational::from_float(self)
                     .map(|val| val.to_integer())
                     .and_then(|val| $to_primitive(&val))
                     .ok_or(TrapKind::InvalidConversionToInt)
+            }
+            #[cfg(not(feature = "std"))]
+            fn try_truncate_into(self) -> Result<$into, TrapKind> {
+                // Casting from a float to an integer will round the float towards zero
+                // NOTE: currently this will cause Undefined Behavior if the rounded value cannot be represented by the
+                // target integer type. This includes Inf and NaN. This is a bug and will be fixed.
+                if self.is_nan() || self.is_infinite() {
+                    return Err(TrapKind::InvalidConversionToInt);
+                }
+
+                // range check
+                let result = self as $into;
+                if result as $from != self.trunc() {
+                    return Err(TrapKind::InvalidConversionToInt);
+                }
+
+                Ok(self as $into)
             }
         }
     };
